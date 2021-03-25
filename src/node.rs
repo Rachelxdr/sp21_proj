@@ -212,10 +212,10 @@ impl Node {
         msg.push_str(&public_str);
         // msg.push_str(self.public_key.as_bytes().to_owned());
         println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
-        // for party in self.membership_list.iter() {
-        //     self.send_message(party, msg);
-        // }
-        self.send_message(INTRODUCER_IP.to_string(), msg);
+        for party in self.membership_list.iter() {
+            self.send_message(party, msg);
+        }
+        // self.send_message(INTRODUCER_IP.to_string(), msg);
     }
 
 
