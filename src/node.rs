@@ -213,7 +213,7 @@ impl Node {
         // msg.push_str(self.public_key.as_bytes().to_owned());
         println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
         for party in self.membership_list.iter() {
-            self.send_message(party.to_string(), msg);
+            self.send_message(party.to_string(), msg.clone());
         }
         // self.send_message(INTRODUCER_IP.to_string(), msg);
     }
