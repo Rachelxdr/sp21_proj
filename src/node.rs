@@ -213,7 +213,7 @@ impl Node {
         // msg.push_str(self.public_key.as_bytes().to_owned());
         println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
         for party in self.membership_list.iter() {
-            self.send_message(party.to_string(), msg.clone());
+            self.send_message(INTRODUCER_IP.to_string(), party.to_string().clone());
         }
         // self.send_message(INTRODUCER_IP.to_string(), msg);
     }
@@ -321,40 +321,43 @@ pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
     let sleep_period = time::Duration::from_millis(1000);
     loop {
         // println!("server receive loop");
-        if let Ok((mut socket, addr)) = server.accept() {
-            println!("Client {} connected", addr);
+        for stream in server.incoming() {
 
-            // let tx = tx.clone();
+        
+            if let Ok((mut socket, addr)) = server.accept() {
+                println!("Client {} connected", addr);
 
-            clients.push(socket.try_clone().expect("failed to clone client"));
+                // let tx = tx.clone();
 
-            // thread::spawn(move || loop {
-            loop{
-                let mut buff = vec![0; MSG_SIZE]; // MSG_SIZE 0s
-                // let mut buff = vec![];
-                match socket.read_exact(&mut buff) {
-                    Ok(_) => {
-                        let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
-                        let msg = String::from_utf8(msg).expect("Invalid utf8 message");
+                clients.push(socket.try_clone().expect("failed to clone client"));
 
-                        println!("server receive {}, {:?}", addr, msg);
-                        //TODO process message here
-                        tx.send(addr.to_string()).expect("failed to send msg to rx");
-                        println!("pushed received message to the channel");
-                    },
+                // thread::spawn(move || loop {
+                loop{
+                    let mut buff = vec![0; MSG_SIZE]; // MSG_SIZE 0s
+                    // let mut buff = vec![];
+                    match socket.read_exact(&mut buff) {
+                        Ok(_) => {
+                            let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
+                            let msg = String::from_utf8(msg).expect("Invalid utf8 message");
 
-                    Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
-                    Err(e) => {
-                        println!("closing connection with :{}, Err:{:?}", addr, e);
-                        break;
+                            println!("server receive {}, {:?}", addr, msg);
+                            //TODO process message here
+                            tx.send(addr.to_string()).expect("failed to send msg to rx");
+                            println!("pushed received message to the channel");
+                        },
+
+                        Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
+                        Err(e) => {
+                            println!("closing connection with :{}, Err:{:?}", addr, e);
+                            break;
+                        }
                     }
+
+                    std::thread::sleep(sleep_period);
                 }
-
-                std::thread::sleep(sleep_period);
+                // });
             }
-            // });
         }
-
         // if let Ok(msg) = rx.try_recv() {
         //     clients = clients.into_iter().filter_map(|mut client| {
         //         let mut buff = msg.clone().into_bytes();
