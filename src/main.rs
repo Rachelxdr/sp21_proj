@@ -6,6 +6,8 @@ use crate::tcp_socket::Tcp_socket;
 mod node;
 mod tcp_socket;
 use fujisaki_ringsig::{gen_keypair, sign, verify, Tag};
+use std::sync::mpsc::{self, TryRecvError};
+// use std::backtrace::Backtrace;
 // mod key;
 // mod lib;
 // mod prelude;
@@ -13,11 +15,21 @@ use fujisaki_ringsig::{gen_keypair, sign, verify, Tag};
 // mod test_utils;
 // mod trace;
 //0: new node joining
+// const channel = mpsc::channel::<String>();
+
 fn main() {
-    let test_node = Node::new();
+    // let bt = Backtrace::new();
+    
+    let(tx, rx) = mpsc::channel();
+    println!("rx address in main: {:p}", &rx);
+    println!("tx address in main: {:p}", &tx);
+    let mut test_node = Node::new(rx);
     let server_thread = thread::spawn(move || {
-        node::server_thread_create();
+        node::server_thread_create(tx);
+        // &test_node.server_thread_create();
     });
+    //TODO move server thread to the node struct
+
 
     // println!("Please enter a role: H (honest) / B (Byzantine)");
     // let mut buff = String::new();
@@ -36,5 +48,6 @@ fn main() {
     // test_node.send_message("hello from client5".to_string());
     // test_node.send_message("hello from client6".to_string());
     let server_res = server_thread.join();
+    // println!("{:?}", bt);
 }
 
