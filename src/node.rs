@@ -212,10 +212,10 @@ impl Node {
         msg.push_str(&public_str);
         // msg.push_str(self.public_key.as_bytes().to_owned());
         println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
-        for party in self.membership_list.iter() {
-            self.send_message(party, msg);
-        }
-        // self.send_message(INTRODUCER_IP.to_string(), msg);
+        // for party in self.membership_list.iter() {
+        //     self.send_message(party, msg);
+        // }
+        self.send_message(INTRODUCER_IP.to_string(), msg);
     }
 
 
@@ -320,7 +320,7 @@ pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
     // let (tx, rx) = mpsc::channel::<String>();
     let sleep_period = time::Duration::from_millis(1000);
     loop {
-        println!("server receive loop");
+        // println!("server receive loop");
         if let Ok((mut socket, addr)) = server.accept() {
             println!("Client {} connected", addr);
 

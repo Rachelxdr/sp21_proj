@@ -31,14 +31,14 @@ fn main() {
     //TODO move server thread to the node struct
 
 
-    // println!("Please enter a role: H (honest) / B (Byzantine)");
-    // let mut buff = String::new();
-    // io::stdin().read_line(&mut buff).expect("reading from stdin failed");
-
-    // if buff == 'H'.to_string(){
-    //     test_node.start_honest();
-    // }
-    test_node.start_honest();
+    println!("Please enter a role: H (honest) / B (Byzantine)");
+    let mut buff = String::new();
+    io::stdin().read_line(&mut buff).expect("reading from stdin failed");
+    println!("buff: [{}]", buff);
+    if buff == "H\n".to_string(){
+        test_node.start_honest();
+    }
+    // test_node.start_honest();
 
     
     // test_node.send_message("hello from client1".to_string());
