@@ -17,8 +17,8 @@ use fujisaki_ringsig::{gen_keypair, sign, verify, Tag};
 use std::fmt;
 
 
-
-
+//source $HOME/.cargo/env
+//curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 const MSG_SIZE:usize = 256;
 const INTRODUCER_IP: &str = "10.193.227.18"; // 192.168.31.154 for local test, 172.22.94.218 for vm test
 const PORT: &str = ":6000";
