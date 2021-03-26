@@ -112,7 +112,7 @@ impl Node {
                 },
                 Err(TryRecvError::Empty) => {
                     println!("No more msgs");
-                    break;
+                
                 },
                 Err(TryRecvError::Disconnected) => {
                     println!("disconnected");
