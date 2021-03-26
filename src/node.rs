@@ -111,7 +111,7 @@ impl Node {
                     msg_received.push(msg);
                 },
                 Err(TryRecvError::Empty) => {
-                    println!("No more msgs");
+                    // println!("No more msgs");
                 
                 },
                 Err(TryRecvError::Disconnected) => {
