@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::net;
+use std::env;
 use std::net::TcpStream;
 use dns_lookup::{get_hostname, lookup_host};
 use std::net::IpAddr;
@@ -22,7 +24,7 @@ use std::fmt;
 const MSG_SIZE:usize = 256;
 const INTRODUCER_IP: &str = "10.193.227.18"; // 192.168.31.154 for local test, 172.22.94.218 for vm test
 const PORT: &str = ":6000";
-
+const CLIENT_PORT: &str = ":6001";
 pub struct Node {
     id: String, // also used a public key
     hb:i32, 
@@ -222,22 +224,32 @@ impl Node {
     pub fn send_message(&self, target: String, msg: String) {
         thread::sleep(time::Duration::from_millis(2000));
         // println!("client send message");
-        // let host_name = dns_lookup::get_hostname().unwrap();
-        // let ip_addr: Vec<IpAddr> = lookup_host(&host_name).unwrap();
+        let host_name = dns_lookup::get_hostname().unwrap();
+        let ip_addr: Vec<IpAddr> = lookup_host(&host_name).unwrap();
+        let mut bind_param = ip_addr[0].to_string();
+        bind_param.push_str(CLIENT_PORT);
+        let socket = net::UdpSocket::bind(bind_param).expect("client failed to bind");
+
         let mut connect_param = target.clone();
         connect_param.push_str(PORT);
-        println!("target: {}, msg: {}", connect_param, msg);
-        let mut target = TcpStream::connect(connect_param).expect("client Stream failed to connect");
-        target.set_nonblocking(true).expect("client failed to initialize non-blocking");
-        let mut buff = vec![0; MSG_SIZE];
+        // let socket = net::UdpSocket::bind(connect_param.clone()).expect("client failed to bind");
+
+        println!("target: {}, msg: {}", connect_param.clone(), msg);
+        // let mut target = net::UdpSocket::bind(connect_param).expect("client Stream failed to connect");
+        // target.set_nonblocking(true).expect("client failed to initialize non-blocking");
+        // let mut buff = vec![0; MSG_SIZE];
 
         // let mut msg_string: String = String::new();
         // msg_string.push_str("hello world");
 
 
-        let mut buff = msg.clone().into_bytes();
-        buff.resize(MSG_SIZE, 0);
-        target.write_all(&buff).expect("client writing to socket failed");
+        let buff = msg.clone().into_bytes();
+        // buff.resize(MSG_SIZE, 0);
+        match socket.send_to(&buff, connect_param){
+            Ok(number_of_bytes) => println!("{:?}", number_of_bytes),
+            Err(fail) => println!("failed sending {:?}", fail),
+        }
+        // target.write_all(&buff).expect("client writing to socket failed");
 
         println!("msg sent!");
 
@@ -312,52 +324,81 @@ pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
     bind_param.push_str(":6000");
     println!("full address: {}", bind_param);
 
-    let server = TcpListener::bind(bind_param).expect("Listener failed to bind");
+    let server = net::UdpSocket::bind(bind_param).expect("Listener failed to bind");
     server.set_nonblocking(true).expect("failed to initialize non-blocking");
 
-    let mut clients = vec![]; // vector os connected clients
+    // let mut clients = vec![]; // vector os connected clients
 
     // let (tx, rx) = mpsc::channel::<String>();
     let sleep_period = time::Duration::from_millis(1000);
     loop {
         // println!("server receive loop");
-        for stream in server.incoming() {
+
+        // let mut buff = vec![0, MSG_SIZE];
+
+        let mut buf: [u8; MSG_SIZE] = [0; MSG_SIZE];
+        let number_of_bytes: usize = 0;
+        let mut result: Vec<u8> = Vec::new();
+
+        match server.recv_from(&mut buf) {
+            Ok((number_of_bytes, src_addr)) => {
+                // let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
+                result = Vec::from(&buf[0..number_of_bytes]);
+                let msg = String::from_utf8(result).expect("Invalid utf8 message");
+        
+                println!("server receive, src_addr: {:?}, msg: {:?}", src_addr, msg);
+                //TODO 03/25 figure out why the channel doesn't send everytime
+                tx.send(src_addr.to_string()).expect("failed to send msg to rx");
+                println!("pushed received message to the channel");
+            }, 
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
+            Err(fail) => println!("failed listening {:?}", fail)
+            // Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
+            // Err(e) => {
+            //     println!("closing connection with :{}, Err:{:?}", msg, e);
+            //     break;
+            // }
+        }
+    
+
+
+        // for stream in server.incoming() {
 
         
-            if let Ok((mut socket, addr)) = server.accept() {
-                println!("Client {} connected", addr);
+        //     if let Ok((mut socket, addr)) = server.accept() {
+        //         println!("Client {} connected", addr);
 
-                // let tx = tx.clone();
+        //         // let tx = tx.clone();
 
-                clients.push(socket.try_clone().expect("failed to clone client"));
+        //         clients.push(socket.try_clone().expect("failed to clone client"));
 
-                // thread::spawn(move || loop {
-                loop{
-                    let mut buff = vec![0; MSG_SIZE]; // MSG_SIZE 0s
-                    // let mut buff = vec![];
-                    match socket.read_exact(&mut buff) {
-                        Ok(_) => {
-                            let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
-                            let msg = String::from_utf8(msg).expect("Invalid utf8 message");
+        //         // thread::spawn(move || loop {
+        //         loop{
+        //             let mut buff = vec![0; MSG_SIZE]; // MSG_SIZE 0s
+        //             // let mut buff = vec![];
+        //             match socket.read_exact(&mut buff) {
+        //                 Ok(_) => {
+        //                     let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
+        //                     let msg = String::from_utf8(msg).expect("Invalid utf8 message");
 
-                            println!("server receive {}, {:?}", addr, msg);
-                            //TODO process message here
-                            tx.send(addr.to_string()).expect("failed to send msg to rx");
-                            println!("pushed received message to the channel");
-                        },
+        //                     println!("server receive {}, {:?}", addr, msg);
+        //                     //TODO 03/25 figure out why the channel doesn't send everytime
+        //                     tx.send(addr.to_string()).expect("failed to send msg to rx");
+        //                     println!("pushed received message to the channel");
+        //                 },
 
-                        Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
-                        Err(e) => {
-                            println!("closing connection with :{}, Err:{:?}", addr, e);
-                            break;
-                        }
-                    }
+        //                 Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
+        //                 Err(e) => {
+        //                     println!("closing connection with :{}, Err:{:?}", addr, e);
+        //                     break;
+        //                 }
+        //             }
 
-                    std::thread::sleep(sleep_period);
-                }
-                // });
-            }
-        }
+        //             std::thread::sleep(sleep_period);
+        //         }
+        //         // });
+        //     }
+        // }
         // if let Ok(msg) = rx.try_recv() {
         //     clients = clients.into_iter().filter_map(|mut client| {
         //         let mut buff = msg.clone().into_bytes();
