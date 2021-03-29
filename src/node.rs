@@ -127,8 +127,8 @@ impl Node {
                 Some(incoming_pk) => {
                     let received_pk: fujisaki_ringsig::PublicKey = incoming_pk;
                     // println!("incoming key decoded successfully: {:?}", received_pk);
-                    assert_eq!(received_pk, self.public_key);
-                    println!("assert passed again");
+                    // assert_eq!(received_pk, self.public_key);
+                    // println!("assert passed again");
                     if (src_addr != "") {
                         match self.parties_status.get(&src_addr) {
                             Some(_) => (), 
