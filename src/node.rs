@@ -223,9 +223,7 @@ impl Node {
             }
         }
 
-        for (key, val) in self.parties_status.iter() {
-            println!("src: {:?} flag: {:?}", key, val.1);
-        }
+        
     }
 
     // fn client_process(&self) {
@@ -277,8 +275,11 @@ impl Node {
                 thread::sleep(time::Duration::from_millis(2000));
                 &self.process_received();
                 // if (self.parties_status.len() != self.membership_list.len()) {
-                if (self.parties_status.len() == 0) {
+                if (self.parties_status.len() < 7) {
                     continue;
+                }
+                for (key, val) in self.parties_status.iter() {
+                    println!("src: {:?} flag: {:?}", key, val.1);
                 }
                 // &self.create_trs();
                 // &self.client_process();
