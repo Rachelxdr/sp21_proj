@@ -224,7 +224,7 @@ impl Node {
         }
 
         for (key, val) in self.parties_status.iter() {
-            println!("src: {:?} pk: {:?}", key, val);
+            println!("src: {:?} flag: {:?}", key, val.1);
         }
     }
 
@@ -273,7 +273,7 @@ impl Node {
                 //     &self.client_start();
                 //     self.status = 1;
                 // }
-                println!("client thread");
+                // println!("client thread");
                 thread::sleep(time::Duration::from_millis(2000));
                 &self.process_received();
                 // if (self.parties_status.len() != self.membership_list.len()) {
