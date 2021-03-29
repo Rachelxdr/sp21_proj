@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net;
 use std::env;
+use std::str;
 use std::net::TcpStream;
 use dns_lookup::{get_hostname, lookup_host};
 use std::net::IpAddr;
@@ -15,6 +16,7 @@ use std::hash::{Hash, Hasher};
 use rand::rngs::OsRng;
 use rand_core::{RngCore, Error, impls};
 use x25519_dalek::{EphemeralSecret, PublicKey};
+use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use fujisaki_ringsig::{gen_keypair, sign, verify, Tag};
 use std::fmt;
 
@@ -22,7 +24,7 @@ use std::fmt;
 //source $HOME/.cargo/env
 //curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 const MSG_SIZE:usize = 256;
-const INTRODUCER_IP: &str = "10.193.227.18"; // 192.168.31.154 for local test, 172.22.94.218 for vm test
+const INTRODUCER_IP: &str = "10.193.227.18"; // 192.168.31.154 for local test, 172.22.94.218 for vm test, "10.193.227.18"
 const PORT: &str = ":6000";
 const CLIENT_PORT: &str = ":6001";
 pub struct Node {
@@ -30,28 +32,28 @@ pub struct Node {
     hb:i32, 
     local_clock:i32,
     membership_list: Vec<String>,
-    parties_status: HashMap<String, (String, u8)>, // Ip_addr -> (public_key, flag) flag = 0(honest), flag = 1(byzantine)
+    parties_status: HashMap<String, (fujisaki_ringsig::PublicKey, u8)>, // Ip_addr -> (public_key, flag) flag = 0(honest), flag = 1(byzantine)
     status: u8, // INACTIVE = 0, ACTIVE = 1
     tcp_util: Tcp_socket,
-    secret_key: x25519_dalek::EphemeralSecret,
-    public_key: x25519_dalek::PublicKey,
-    ssk: fujisaki_ringsig::PrivateKey,
-    spk: fujisaki_ringsig::PublicKey,
+    ssk: x25519_dalek::EphemeralSecret,
+    spk: x25519_dalek::PublicKey,
+    secret_key: fujisaki_ringsig::PrivateKey,
+    public_key: fujisaki_ringsig::PublicKey,
     // ssk: RSAPrivateKey,
     // spk: RSAPublicKey,
     trs: (u64, Vec<String>, u64),
     // channel: (std::sync::mpsc::Sender<String>, std::sync::mpsc::Receiver<String>)
     // server_channel: std::sync::mpsc::Sender<String>, 
-    rx: std::sync::mpsc::Receiver<String>,
-    client_sender: std::sync::mpsc::Sender<String>,
-    client_receiver: std::sync::mpsc::Receiver<String>
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    // client_sender: std::sync::mpsc::Sender<String>,
+    // client_receiver: std::sync::mpsc::Receiver<String>
 
 
 }
 
 impl Node {
     // pub fn new(rx: std::sync::mpsc::Receiver<String>) -> Node{
-    pub fn new(rx: std::sync::mpsc::Receiver<String> ) -> Node{
+    pub fn new(rx: std::sync::mpsc::Receiver<Vec<u8>> ) -> Node{
         println!("creating new node");
         let mut rng = OsRng;
         let mut rng1 = OsRng;
@@ -61,11 +63,12 @@ impl Node {
         // let rsa_public = RSAPublicKey::from(&rsa_secret);
         // let (sk, pk) = fujisaki_ringsig::gen_keypair(rng);
         let (s_sk, s_pk) = fujisaki_ringsig::gen_keypair(rng1);
+        println!("original pk to compare: {:?}", s_pk);
         let sk = EphemeralSecret::new(rng1);
         let pk = PublicKey::from(&sk);
         println!(" public key equal: {:?}",  pk.as_bytes());
         // println!("shadow secret key: {:?}, shadow public key: {:?}", s_sk, s_pk);
-        let my_channel = std::sync::mpsc::channel::<String>();
+        let my_channel = std::sync::mpsc::channel::<Vec<u8>>();
         println!("sender: {:?}, receiver: {:?}", my_channel.0, my_channel.1);
         Node {
             id: Node::create_id(),
@@ -82,15 +85,15 @@ impl Node {
                      "172.22.156.223".to_string(), // vm6
                      "172.22.94.221".to_string()], // vm7
             parties_status: HashMap::new(),
-            secret_key: sk,
-            public_key: pk,
-            ssk: s_sk,
-            spk: s_pk,
+            ssk: sk,
+            spk: pk,
+            secret_key: s_sk,
+            public_key: s_pk,
             trs: (0, vec![], 0),
             // server_channel: my_channel.0, 
             rx: rx, 
-            client_sender: my_channel.0,
-            client_receiver: my_channel.1
+            // client_sender: my_channel.0,
+            // client_receiver: my_channel.1
         }
         // println!("sender: {:?}, receiver: {:?}", channel.0, channel.1);
 
@@ -102,47 +105,112 @@ impl Node {
     //     s.finish();
     // }
     
-    fn process_message(&mut self, msg:String) {
-        let msg_ind = msg.as_str();
-        if (msg_ind.chars().nth(1).unwrap() == '0') {
-            println!("message type is 0, msg:{:?}", msg);
-            let mut split_ret = msg.split("::");
-            split_ret.next();
-            let msg_content = split_ret.next().unwrap().clone();
-            println!("msg_content: {}", msg_content);
-            let mut split_content = msg_content.split("==");
-            let incoming_pk = split_content.next().unwrap().clone();
-            let src_addr = split_content.next().unwrap().clone();
-            
-            println!("incoming pk: {}, src_addr: {}", incoming_pk, src_addr);
-            
-            match self.parties_status.get(src_addr) {
-                Some(_) => (),
-                None => {
-                    println!(" adding incoming pk: {}, src_addr: {}", incoming_pk, src_addr);
-                    let new_party: (String, u8) = (incoming_pk.to_string(), 0);
-                    self.parties_status.insert(src_addr.to_string(), new_party);
-                    println!("added new pk");
-                }
-            }
-            
+    fn process_message(&mut self, msg:Vec<u8>) {
+
+        println!("message vec received: {:?}", msg);
+        let msg_type: u8 = msg[0];
+        let msg_len: u8 = msg[1];
+        let is_anonymous: u8 = msg[2];
+        let msg_end: usize = (msg_len + 3).into();
+        let msg_vec: Vec<u8> = (&msg[3..msg_end]).to_vec();
+        let mut src_addr:String = "".to_string();
+        if (is_anonymous == 0) {
+            let addr_vec: Vec<u8> = (&msg[msg_end..]).to_vec();
+            src_addr = src_addr.replace("", &String::from_utf8(addr_vec).unwrap());
+            println!("src_addr parsed: {:?}", src_addr);
         }
+
+        println!("msg_vec received: {:?}", msg_vec);
+
+        if (msg_type == 0) {
+            match fujisaki_ringsig::PublicKey::from_bytes(&msg_vec) {
+                Some(incoming_pk) => {
+                    let received_pk: fujisaki_ringsig::PublicKey = incoming_pk;
+                    // println!("incoming key decoded successfully: {:?}", received_pk);
+                    assert_eq!(received_pk, self.public_key);
+                    println!("assert passed again");
+                    if (src_addr != "") {
+                        match self.parties_status.get(&src_addr) {
+                            Some(_) => (), 
+                            None => {
+                                let new_party: (fujisaki_ringsig::PublicKey, u8) = (received_pk, 0);
+                                self.parties_status.insert(src_addr.clone(), new_party);
+                                println!("inserted new party: {:?}", src_addr.clone());
+                            }
+                        }
+                    } else {
+                        println!("error src_addr");
+                    }
+                    
+    
+                }, 
+                None => {
+                    println!("incoming key error");
+                } 
+            }
+        }
+
+       
+        // let received_pk: fujisaki_ringsig::PublicKey = fujisaki_ringsig::PublicKey::from_bytes(&msg).unwrap();
+
+        // let msg_ind = msg.as_str();
+        // if (msg_ind.chars().nth(1).unwrap() == '0') {
+        //     println!("message type is 0, msg:{:?}", msg);
+        //     let mut split_ret = msg.split("::");
+        //     split_ret.next();
+        //     let msg_content = split_ret.next().unwrap().clone();
+        //     println!("msg_content: {}", msg_content);
+        //     let whole_msg_byte = msg.clone().into_bytes();
+        //     println!("whole_msg_byte: {:?}", whole_msg_byte);
+        //     let mut split_content = msg_content.split("==");
+        //     let incoming_pk = split_content.next().unwrap().clone();
+        //     let src_addr = split_content.next().unwrap().clone();
+            
+        //     println!("incoming pk: {}, src_addr: {}", incoming_pk, src_addr);
+        //     let pk_byte = String::from(incoming_pk);
+        //     // let pk_byte_as = String::from(incoming_pk);
+        //     let mut pk_vec: Vec<u8> = vec![0; 32];
+        //     // let mut pk_vec_as: Vec<u8> = vec![0; 32];
+        //     pk_vec = pk_byte.into_bytes();
+        //     // let pk_vec_as = pk_byte_as.as_bytes().to_vec();
+        //     println!("incoming pk into bytes: {:?}", pk_vec);
+        //     // println!("incoming pk as bytes: {:?}", pk_vec_as);
+        //     let pk_str_sec = String::from_utf8_lossy(&pk_vec);
+        //     println!("pk_str_sec:  {:?}", pk_str_sec);
+
+        //     let pk_vec_sec = pk_str_sec.unwrap().clone().into_bytes();
+        //     println!("pk_vec_sec: {:?}", pk_vec_sec);
+
+
+
+        //     match self.parties_status.get(src_addr) {
+        //         Some(_) => (),
+        //         None => {
+        //             println!(" adding incoming pk: {}, src_addr: {}", incoming_pk, src_addr);
+        //             // let received_key: 
+        //             let new_party: (String, u8) = (incoming_pk.to_string(), 0);
+        //             self.parties_status.insert(src_addr.to_string(), new_party);
+        //             println!("added new pk");
+        //         }
+        //     }
+            
+        // }
     }
 
     fn process_received(&mut self) {
         println!("rx address in process: {:p}", &self.rx);
-        let mut msg_received: Vec<String> = vec![];
+        // let mut msg_received: Vec<String> = vec![];
         loop {
             match self.rx.try_recv() {
                 Ok(msg) => {
                     println!("received from channel");
                     // TODO process message here
                     &self.process_message(msg.clone());
-                    msg_received.push(msg);
+                    // msg_received.push(msg);
 
                 },
                 Err(TryRecvError::Empty) => {
-                    if (self.parties_status.len() == self.membership_list.len()) {
+                    if (self.parties_status.len() == 7) {
                         break;
                     }
                     // println!("No more msgs");
@@ -160,39 +228,59 @@ impl Node {
         }
     }
 
-    fn client_process(&self) {
-        let mut msg_received: Vec<String> = vec![];
-        loop {
-            match self.client_receiver.try_recv() {
-                Ok(msg) => {
-                    println!("received from channel");
-                    msg_received.push(msg);
-                },
-                Err(TryRecvError::Empty) => {
-                    println!("No more msgs");
-                    // break;
-                },
-                Err(TryRecvError::Disconnected) => {
-                    println!("disconnected");
-                    break;
-                }
-            }
-        }
+    // fn client_process(&self) {
+    //     let mut msg_received: Vec<String> = vec![];
+    //     loop {
+    //         match self.client_receiver.try_recv() {
+    //             Ok(msg) => {
+    //                 println!("received from channel");
+    //                 msg_received.push(msg);
+    //             },
+    //             Err(TryRecvError::Empty) => {
+    //                 println!("No more msgs");
+    //                 // break;
+    //             },
+    //             Err(TryRecvError::Disconnected) => {
+    //                 println!("disconnected");
+    //                 break;
+    //             }
+    //         }
+    //     }
 
-        for m in msg_received.iter() {
-            println!("client received message {:?}", m);
-        }
-    }
+    //     for m in msg_received.iter() {
+    //         println!("client received message {:?}", m);
+    //     }
+    // }
+
+    // pub fn create_trs(&mut self) {
+    //     let issue = b"anonymous pke".to_vec();
+    //     let mut pubkeys: Vec<fujisaki_ringsig::PublicKey> = vec![];
+    //     for (ip, pk) in self.parties_status.iter() {
+    //         pubkeys.push(pk);
+    //     }
+    //     for key
+    // }
 
     pub fn start_honest(mut self) {
         // Hardcode membership list for now
         
             println!("starting honest node");
             &self.client_start();
+            println!("starting thread");
             let client_thread = thread::spawn(move || loop {
-                // &self.client_start();
+                // if (self.status == 0) {
+
+                //     &self.client_start();
+                //     self.status = 1;
+                // }
+                println!("client thread");
                 thread::sleep(time::Duration::from_millis(2000));
                 &self.process_received();
+                // if (self.parties_status.len() != self.membership_list.len()) {
+                if (self.parties_status.len() == 0) {
+                    continue;
+                }
+                // &self.create_trs();
                 // &self.client_process();
             });
 
@@ -267,37 +355,83 @@ impl Node {
 
     }
 
+    pub fn create_msg(&self, mut msg_vec: Vec<u8>, mut msg_type: u8, mut is_anonymous: u8) -> Vec<u8>{
+        let msg_len: u8 = msg_vec.len() as u8;
+        let mut result_vec: Vec<u8> = vec![msg_type, msg_len, is_anonymous];
+        result_vec.append(&mut msg_vec);
+        result_vec
+
+    }
+
     pub fn client_start(&self){
         let mut msg: String = String::new();
         msg.push_str("[0]::");
-        let mut public_key_vec = self.public_key.as_bytes();
+        // println!("pk before send: {:?}", self.public_key);
+        let mut public_key_vec: Vec<u8> = self.public_key.as_bytes();
+        let mut my_vec: Vec<u8> = vec![1];
+        // my_vec.append(& mut public_key_vec.clone());
+        // println!("my_vec: {:?}", my_vec);
         println!("public_key_vec: {:?}", public_key_vec);
-
-        let public_str = String::from_utf8_lossy(public_key_vec);
-        msg.push_str(&public_str);
-        // msg.push_str(self.public_key.as_bytes().to_owned());
-        println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
-        for party in self.membership_list.iter() {
-            self.send_message(party.to_string(), msg.clone());
+        
+        let received_pk: fujisaki_ringsig::PublicKey;
+        let msg_to_send: Vec<u8> = self.create_msg(public_key_vec.clone(), 0, 0);
+        let ref_vec: &[u8] = &msg_to_send[3..];
+        println!("msg_to_send: {:?}", msg_to_send);
+        match fujisaki_ringsig::PublicKey::from_bytes(ref_vec) {
+            Some(incoming_pk) => {
+                received_pk = incoming_pk;
+                // println!("incoming key decoded before send: {:?}", received_pk);
+                assert_eq!(received_pk, self.public_key);
+                println!("assert passed");
+            }, 
+            None => {
+                println!("incoming key error");
+            } 
         }
-        // self.send_message(INTRODUCER_IP.to_string(), msg);
+        
+        // create_msg(public_key_vec.clone(), 0);
+        // let public_str = String::from_utf8_lossy(&public_key_vec);
+        // let public_str = String::from_utf8_lossy(&public_key_vec);
+        // println!("public_str:{:?}", public_str);
+        // match &public_str.unwrap() {
+        //     Ok(pub_str) => {
+        //         msg.push_str(pub_str);
+        //     },
+        //     Err(e) => {
+        //         println!("err utf8:{:?}", e);
+        //     }
+        
+        // msg.push_str(&public_str);
+        // msg.push_str(self.public_key.as_bytes().to_owned());
+        // println!("sending to {}, msg: {}", INTRODUCER_IP.to_string(), msg);
+        for party in self.membership_list.iter() {
+            self.send_message(party.to_string(), msg_to_send.clone());
+        }
+        // self.send_message(INTRODUCER_IP.to_string(), msg_to_send);
     }
 
+    // pub fn send_message_bytes(&self, target: String, msg: Vec<u8>) {
 
-    pub fn send_message(&self, target: String, msg: String) {
-        thread::sleep(time::Duration::from_millis(2000));
+    // }
+
+
+    pub fn send_message(&self, target: String, msg: Vec<u8>) {
+        // thread::sleep(time::Duration::from_millis(2000));
         // println!("client send message");
         let host_name = dns_lookup::get_hostname().unwrap();
         let ip_addr: Vec<IpAddr> = lookup_host(&host_name).unwrap();
         let mut bind_param = ip_addr[0].to_string();
         bind_param.push_str(CLIENT_PORT);
+
+        let local_param = "192.168.31.154:6001".to_string();
+
         let socket = net::UdpSocket::bind(bind_param).expect("client failed to bind");
 
         let mut connect_param = target.clone();
         connect_param.push_str(PORT);
         // let socket = net::UdpSocket::bind(connect_param.clone()).expect("client failed to bind");
 
-        println!("target: {}, msg: {}", connect_param.clone(), msg);
+        println!("target: {}, msg: {:?}", connect_param.clone(), msg);
         // let mut target = net::UdpSocket::bind(connect_param).expect("client Stream failed to connect");
         // target.set_nonblocking(true).expect("client failed to initialize non-blocking");
         // let mut buff = vec![0; MSG_SIZE];
@@ -306,9 +440,9 @@ impl Node {
         // msg_string.push_str("hello world");
 
 
-        let buff = msg.clone().into_bytes();
-        // buff.resize(MSG_SIZE, 0);
-        match socket.send_to(&buff, connect_param){
+        // let buff = msg.clone().into_bytes();
+        println!("msg_vec: {:?}", msg);
+        match socket.send_to(&msg, connect_param){
             Ok(number_of_bytes) => println!("{:?}", number_of_bytes),
             Err(fail) => println!("failed sending {:?}", fail),
         }
@@ -376,9 +510,9 @@ impl Node {
     
 }
 
-pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
+pub fn server_thread_create(tx: std::sync::mpsc::Sender<Vec<u8>> ) {
     println!("tx address in thread: {:p}", &tx);
-    tx.send("hello from tx".to_string());
+    // tx.send("hello from tx".to_string());
     println!("server_thread_create");
     // let tx = *tx_addr;
     let host_name = dns_lookup::get_hostname().unwrap();
@@ -386,6 +520,8 @@ pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
     let mut bind_param = ip_addr[0].to_string();
     bind_param.push_str(":6000");
     println!("full address: {}", bind_param);
+
+    let local_param = "192.168.31.154:6000".to_string();
 
     let server = net::UdpSocket::bind(bind_param).expect("Listener failed to bind");
     server.set_nonblocking(true).expect("failed to initialize non-blocking");
@@ -407,14 +543,20 @@ pub fn server_thread_create(tx: std::sync::mpsc::Sender<String> ) {
             Ok((number_of_bytes, src_addr)) => {
                 // let msg = buff.into_iter().take_while(|&x| x != 0).collect::<Vec<_>>();
                 result = Vec::from(&buf[0..number_of_bytes]);
-                let msg = String::from_utf8(result).expect("Invalid utf8 message");
+                let mut addr_vec: Vec<u8> = vec![];
+                addr_vec = src_addr.to_string().into_bytes();
+                result.append(&mut addr_vec);
+                // let msg = String::from_utf8(result).expect("Invalid utf8 message");
         
-                println!("server receive, src_addr: {:?}, msg: {:?}", src_addr, msg);
-                //TODO 03/25 figure out why the channel doesn't send everytime
-                let mut msg_to_process = String::from(msg);
-                msg_to_process.push_str("==");
-                msg_to_process.push_str(&src_addr.to_string());
-                tx.send(msg_to_process.to_string()).expect("failed to send msg to rx");
+                // println!("server receive, src_addr: {:?}, msg: {:?}", src_addr, msg);
+                // //TODO 03/25 figure out why the channel doesn't send everytime
+                // let mut msg_to_process = String::from(msg);
+                // msg_to_process.push_str("==");
+                // msg_to_process.push_str(&src_addr.to_string());
+                // tx.send(msg_to_process.to_string()).expect("failed to send msg to rx");
+
+
+                tx.send(result).expect("failed to send msg to rx");
                 println!("pushed received message to the channel");
             }, 
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => (),
