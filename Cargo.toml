@@ -31,6 +31,6 @@ digest = { version = "0.9", default-features = false }
 generic-array = "0.9"
 # This isn't the latest version of rand_core, but it's what Dalek is pinned to right now
 rand_core  = { version = "0.5", default-features = false }
-
+sha2 = "0.9.3"
 #end copied
 

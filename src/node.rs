@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net;
 use std::env;
 use std::str;
+use std::ptr;
 use std::net::TcpStream;
 use dns_lookup::{get_hostname, lookup_host};
 use std::net::IpAddr;
@@ -19,6 +20,7 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use fujisaki_ringsig::{gen_keypair, sign, verify, Tag};
 use std::fmt;
+use sha2::Sha512;
 
 
 //source $HOME/.cargo/env
@@ -41,7 +43,7 @@ pub struct Node {
     public_key: fujisaki_ringsig::PublicKey,
     // ssk: RSAPrivateKey,
     // spk: RSAPublicKey,
-    trs: (u64, Vec<String>, u64),
+    // trs: fujisaki_ringsig::Signature,
     // channel: (std::sync::mpsc::Sender<String>, std::sync::mpsc::Receiver<String>)
     // server_channel: std::sync::mpsc::Sender<String>, 
     rx: std::sync::mpsc::Receiver<Vec<u8>>,
@@ -70,6 +72,7 @@ impl Node {
         // println!("shadow secret key: {:?}, shadow public key: {:?}", s_sk, s_pk);
         let my_channel = std::sync::mpsc::channel::<Vec<u8>>();
         println!("sender: {:?}, receiver: {:?}", my_channel.0, my_channel.1);
+        let trs_msg = "intializing trs";
         Node {
             id: Node::create_id(),
             hb: 0,
@@ -89,7 +92,11 @@ impl Node {
             spk: pk,
             secret_key: s_sk,
             public_key: s_pk,
-            trs: (0, vec![], 0),
+            // trs: fujisaki_ringsig::Signature {
+            //     aa1: RistrettoPoint::hash_from_bytes::<Sha512>(trs_msg.as_bytes()),
+            //     cs: vec![],
+            //     zs: vec![],
+            // },
             // server_channel: my_channel.0, 
             rx: rx, 
             // client_sender: my_channel.0,
@@ -250,14 +257,34 @@ impl Node {
     //     }
     // }
 
-    // pub fn create_trs(&mut self) {
-    //     let issue = b"anonymous pke".to_vec();
-    //     let mut pubkeys: Vec<fujisaki_ringsig::PublicKey> = vec![];
-    //     for (ip, pk) in self.parties_status.iter() {
-    //         pubkeys.push(pk);
-    //     }
-    //     for key
-    // }
+    pub fn create_trs(&mut self) -> fujisaki_ringsig::Signature{
+        println!("creating trs");
+        let issue = b"anonymous pke".to_vec();
+        let mut pubkeys: Vec<fujisaki_ringsig::PublicKey> = vec![];
+
+        for (ip, pk) in self.parties_status.iter() {
+            println!("adding pk: {:?}", ip);
+            let pk_vec: Vec<u8> = pk.0.as_bytes();
+            match fujisaki_ringsig::PublicKey::from_bytes(&pk_vec) {
+                Some(pk_trs) => {
+
+                    pubkeys.push(pk_trs);
+                    println!("add pk to tag for trs");
+                }
+                None => {
+                    println!("trs create pk error");
+                }
+            }
+        }
+        let tag = fujisaki_ringsig::Tag { 
+            issue, 
+            pubkeys,
+        };
+
+        let msg_to_sign = self.spk.as_bytes();
+        let mut rng = rand::thread_rng();
+        sign(&mut rng, &*msg_to_sign, &tag, &self.secret_key)
+    }
 
     pub fn start_honest(mut self) {
         // Hardcode membership list for now
@@ -274,6 +301,7 @@ impl Node {
                 // println!("client thread");
                 thread::sleep(time::Duration::from_millis(2000));
                 &self.process_received();
+                println!("received done, len: {:?}", self.parties_status.len());
                 // if (self.parties_status.len() != self.membership_list.len()) {
                 if (self.parties_status.len() < 7) {
                     continue;
@@ -281,8 +309,9 @@ impl Node {
                 for (key, val) in self.parties_status.iter() {
                     println!("src: {:?} flag: {:?}", key, val.1);
                 }
-                // &self.create_trs();
-                // &self.client_process();
+                let trs: fujisaki_ringsig::Signature = self.create_trs();
+                println!("created trs: {:?}", trs);
+                // TODO: 3/29 test trs on vms
             });
 
             // &self.process_received();

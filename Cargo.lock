@@ -13,6 +13,7 @@ dependencies = [
  "rand",
  "rand_core",
  "rsa",
+ "sha2",
  "x25519-dalek",
 ]
 
